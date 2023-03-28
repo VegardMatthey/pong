@@ -12,19 +12,18 @@ const BACKGROUND_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
 const BALL_STARTING_POSITION: Vec3 = Vec3::new(0.0, 0.0, 1.0);
 const BALL_SIZE: Vec3 = Vec3::new(30.0, 30.0, 0.0);
 const BALL_COLOR: Color = Color::rgb(0.5, 1., 0.5);
-const BALL_SPEED: f32 = 700.0;
+const BALL_SPEED: f32 = 600.0;
 
 const WALL_THICKNESS: f32 = 10.0;
 const WALL_COLOR: Color = Color::rgb(0.2, 0.2, 0.2);
 const LEFT_WALL: f32 = -500.; // x coordinates
 const RIGHT_WALL: f32 = 500.;
-const BOTTOM_WALL: f32 = -400.; // y coordinates
-const TOP_WALL: f32 = 400.;
+const BOTTOM_WALL: f32 = -300.; // y coordinates
+const TOP_WALL: f32 = 300.;
 
-const TEXT_COLOR: Color = Color::rgb(0.5, 0.5, 1.0);
-const SCOREBOARD_FONT_SIZE: f32 = 40.0;
+const SCOREBOARD_FONT_SIZE: f32 = 128.0;
 const SCOREBOARD_TEXT_PADDING: Val = Val::Px(5.0);
-const SCORE_COLOR: Color = Color::rgb(1.0, 0.5, 0.5);
+const SCOREBOARD_TEXT_CENTER: Val = Val::Px(960.0);
 
 const PADDLE_SPEED: f32 = 800.;
 const PADDLE_SIZE: Vec3 = Vec3::new(128.0, 32.0, 0.0);
@@ -36,7 +35,10 @@ const PLAYER2_COLOR: Color = Color::rgb(1., 0.5, 0.5);
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(Scoreboard { score: 0 })
+        .insert_resource(Scoreboard {
+            player_1_score: 0,
+            player_2_score: 0,
+        })
         .insert_resource(ClearColor(BACKGROUND_COLOR))
         .add_startup_system(setup)
         .add_event::<CollisionEvent>()
@@ -45,13 +47,13 @@ fn main() {
                 collision,
                 move_player1,
                 move_player2,
-                velocity,
-                reset,
+                velocity.after(collision),
+                reset.after(update_scoreboard),
+                update_scoreboard,
             )
                 .in_schedule(CoreSchedule::FixedUpdate),
         )
         .insert_resource(FixedTime::new_from_secs(TIME_STEP))
-        .add_system(update_scoreboard)
         .add_system(bevy::window::close_on_esc)
         .run();
 }
@@ -70,7 +72,8 @@ struct Player2;
 
 #[derive(Resource)]
 struct Scoreboard {
-    score: usize,
+    player_1_score: usize,
+    player_2_score: usize,
 }
 
 #[derive(Component)]
@@ -164,7 +167,7 @@ fn setup(
             ..default()
         },
         Ball,
-        Velocity(Vec2::new(1.0,1.0).normalize() * BALL_SPEED),
+        Velocity(Vec2::new(1.0, 1.0).normalize() * BALL_SPEED),
     ));
     commands.spawn((
         SpriteBundle {
@@ -173,7 +176,7 @@ fn setup(
                 ..default()
             },
             transform: Transform {
-                translation: Vec2::new(0.0, 350.0).extend(0.0),
+                translation: Vec2::new(0.0, 250.0).extend(0.0),
                 scale: Vec3::new(PADDLE_SIZE.x, PADDLE_SIZE.y, 1.0),
                 ..default()
             },
@@ -189,7 +192,7 @@ fn setup(
                 ..default()
             },
             transform: Transform {
-                translation: Vec2::new(0.0, -350.0).extend(0.0),
+                translation: Vec2::new(0.0, -250.0).extend(0.0),
                 scale: Vec3::new(PADDLE_SIZE.x, PADDLE_SIZE.y, 1.0),
                 ..default()
             },
@@ -200,32 +203,37 @@ fn setup(
     ));
 
     commands.spawn(
-        TextBundle::from_sections([
-            TextSection::new(
-                "Score: ",
-                TextStyle {
-                    font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-                    font_size: SCOREBOARD_FONT_SIZE,
-                    color: TEXT_COLOR,
-                },
-            ),
-            TextSection::from_style(TextStyle {
-                font: asset_server.load("fonts/FiraMono-Medium.ttf"),
-                font_size: SCOREBOARD_FONT_SIZE,
-                color: SCORE_COLOR,
-            }),
-        ])
+        TextBundle::from_sections([TextSection::from_style(TextStyle {
+            font: asset_server.load("fonts/FiraMono-Medium.ttf"),
+            font_size: SCOREBOARD_FONT_SIZE,
+            color: PLAYER1_COLOR,
+        })])
         .with_style(Style {
             position_type: PositionType::Absolute,
             position: UiRect {
                 top: SCOREBOARD_TEXT_PADDING,
-                left: SCOREBOARD_TEXT_PADDING,
+                left: SCOREBOARD_TEXT_CENTER,
                 ..default()
             },
             ..default()
         }),
     );
-
+    commands.spawn((
+        TextBundle::from_sections([TextSection::from_style(TextStyle {
+            font: asset_server.load("fonts/FiraMono-Medium.ttf"),
+            font_size: SCOREBOARD_FONT_SIZE,
+            color: PLAYER2_COLOR,
+        })])
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            position: UiRect {
+                bottom: SCOREBOARD_TEXT_PADDING,
+                left: SCOREBOARD_TEXT_CENTER,
+                ..default()
+            },
+            ..default()
+        }),
+    ));
 }
 
 fn move_player1(
@@ -283,12 +291,11 @@ fn velocity(mut query: Query<(&mut Transform, &Velocity)>) {
 }
 
 fn collision(
-    //mut commands: Commands,
-    //mut scoreboard: ResMut<Scoreboard>,
     mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
     paddle_query: Query<&Transform, With<Paddle>>,
     collider_query: Query<&Transform, With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>,
+    mut scoreboard: ResMut<Scoreboard>,
 ) {
     let (mut ball_velocity, ball_transform) = ball_query.single_mut();
     let ball_size = ball_transform.scale.truncate();
@@ -309,21 +316,20 @@ fn collision(
                 Collision::Left => reflect_x = ball_velocity.x > 0.0,
                 Collision::Right => reflect_x = ball_velocity.x < 0.0,
                 Collision::Top => {
+                    scoreboard.player_1_score += 1;
                     ball_velocity.x = 0.0;
                     ball_velocity.y = 0.0;
                 }
                 Collision::Bottom => {
+                    scoreboard.player_2_score += 1;
                     ball_velocity.x = 0.0;
                     ball_velocity.y = 0.0;
                 }
-                Collision::Inside => { /* do nothing */ }
+                Collision::Inside => ()
             }
 
-            let mut rng = rand::thread_rng();
-
             if reflect_x {
-                let x: f32 = rng.gen_range(-0.2..0.2);
-                ball_velocity.x = -ball_velocity.x + x;
+                ball_velocity.x = -ball_velocity.x;
             }
         }
     }
@@ -344,17 +350,17 @@ fn collision(
                 Collision::Right => reflect_x = ball_velocity.x < 0.0,
                 Collision::Top => reflect_y = ball_velocity.y < 0.0,
                 Collision::Bottom => reflect_y = ball_velocity.y > 0.0,
-                Collision::Inside => { /* do nothing */ }
+                Collision::Inside => ()
             }
 
             let mut rng = rand::thread_rng();
+            let x: f32 = rng.gen_range(-10.0..10.0);
+            
             if reflect_x {
-                let x: f32 = rng.gen_range(-0.2..0.2);
                 ball_velocity.x = -ball_velocity.x + x;
             }
             if reflect_y {
-                let y: f32 = rng.gen_range(-0.2..0.2);
-                ball_velocity.y = -ball_velocity.y + y;
+                ball_velocity.y = -ball_velocity.y;
             }
         }
     }
@@ -387,7 +393,17 @@ fn reset(
 }
 
 fn update_scoreboard(scoreboard: Res<Scoreboard>, mut query: Query<&mut Text>) {
-    let mut text = query.single_mut();
-    text.sections[1].value = scoreboard.score.to_string();
+    let mut x = true;
+    for mut text in &mut query {
+        if scoreboard.player_1_score > 9 {
+            text.sections[0].value = "Player 1 Wins!".to_string();
+        } else if scoreboard.player_2_score > 9 {
+            text.sections[0].value = "Player 2 Wins!".to_string();
+        } else if x {
+            text.sections[0].value = (scoreboard.player_1_score / 2).to_string();
+        } else {
+            text.sections[0].value = (scoreboard.player_2_score / 2).to_string();
+        }
+        x = false;
+    }
 }
-
